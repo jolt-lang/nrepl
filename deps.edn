@@ -1,0 +1,17 @@
+{:paths ["src"]
+
+ ;; The client transport and the session worker bind libc (sockets + the process
+ ;; symbols) through jolt.ffi; declared :process so jolt loads them before the
+ ;; namespaces are required. No external Clojure deps.
+ :jolt/native [{:name "libc (POSIX sockets)" :process true}]
+
+ ;; This library's server middleware (sessions, interruptible-eval, completion,
+ ;; lookup) — jolt.nrepl composes them over its built-in handler. A consuming
+ ;; project adds this lib and copies this line; declared here so `joltc nrepl` in
+ ;; this repo serves the full stack.
+ :nrepl/middleware [nrepl.middleware/default-middleware]
+
+ :aliases {:test {:extra-paths ["test"]
+                  :main-opts ["-m" "nrepl.test-runner"]}}
+
+ :tasks {test "joltc -M:test"}}
