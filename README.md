@@ -37,9 +37,10 @@ Connect your editor (CIDER / Calva / Cursive) to the port in `.nrepl-port`. Your
 project's deps are on the source roots and its native libs are loaded, so
 `(require '[some.lib])` works in the session.
 
-Each session keeps its own current namespace and runs evals on a dedicated
-serialized worker thread, so a long eval doesn't block other ops, and `interrupt`
-keeps the session responsive.
+Each session keeps its own current namespace (jolt's `*ns*` is thread-local) and
+runs evals on a dedicated serialized worker thread, so sessions are isolated and a
+long eval doesn't block other ops. `interrupt` aborts a running eval — even a
+tight loop — and the worker keeps serving.
 
 ## Client
 
@@ -67,8 +68,8 @@ to `"done"`. `combine-responses`, `response-values`, `new-session`, and the
   current namespace (jolt's `chez-current-ns` is a thread-parameter), so sessions
   eval concurrently in different namespaces without clobbering each other.
 
-Both require a jolt that provides `jolt.host/run-interruptible` and a thread-local
-`*ns*` (jolt-lang/jolt#172 and later).
+Both rely on jolt host capabilities — `jolt.host/run-interruptible` and a
+thread-local `*ns*` — so they need a recent jolt (the Chez `main` line).
 
 The official nREPL implementation can't run unchanged on jolt — its core is tied
 to `java.util.concurrent` executors, compiled Java helper classes, a dynamic
