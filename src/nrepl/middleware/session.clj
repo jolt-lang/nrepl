@@ -4,6 +4,13 @@
   thread (a core.async channel + a future), so a session's evals are ordered and
   a long eval doesn't block other ops on the connection.
 
+  Interrupt is real (not best-effort): each eval runs under
+  jolt.host/run-interruptible with a per-eval token, and `interrupt!` sets that
+  token so the running eval aborts at the next safe point (Chez's engine timer is
+  polled at call/loop back-edges). The worker is reused — the computation is not
+  abandoned. A computation blocked in a foreign call (socket recv, sleep) only
+  aborts when it returns to Scheme.
+
   Note on jolt: the compile/eval namespace is process-global (load-string
   resolves against the current in-ns, not a thread-local *ns*), so the worker sets
   the session's ns before each eval. Concurrent ns-changing evals across sessions
@@ -15,10 +22,13 @@
 
 (def ^:private sessions (atom {}))   ;; id -> session
 
-(defn- run-eval [session code-wire ns-str reply]
+(defn- run-eval [session code-wire ns-str reply token]
   (let [code (bencode/wire-> code-wire)
         ns-atom (:ns session)
-        {:keys [value out ns err]} (server/evaluate code (or ns-str @ns-atom))]
+        ;; the actual evaluation runs interruptibly: interrupt! on `token` aborts
+        ;; it (throws {:jolt/interrupted true}), which the worker catches below.
+        {:keys [value out ns err]}
+        (jolt.host/run-interruptible token (fn [] (server/evaluate code (or ns-str @ns-atom))))]
     (reset! ns-atom ns)
     (when (seq out) (reply {"out" out}))
     (if err
@@ -30,12 +40,15 @@
   (future
     (loop []
       (when-let [job (a/<!! (:chan session))]
-        (let [{:keys [code ns reply id]} job]
-          (reset! (:current session) {:id id :reply reply})
-          (try (run-eval session code ns reply)
+        (let [{:keys [code ns reply id]} job
+              token (jolt.host/make-interrupt)]
+          (reset! (:current session) {:id id :reply reply :token token})
+          (try (run-eval session code ns reply token)
                (catch :default e
-                 (reply {"err" (str (server/err-msg e) "\n")})
-                 (reply {"status" ["eval-error" "done"]}))
+                 (if (:jolt/interrupted (ex-data e))
+                   (reply {"status" ["interrupted" "done"]})
+                   (do (reply {"err" (str (server/err-msg e) "\n")})
+                       (reply {"status" ["eval-error" "done"]}))))
                (finally (reset! (:current session) nil)))
           (recur))))))
 
@@ -50,21 +63,14 @@
     session))
 
 (defn interrupt!
-  "Best-effort interrupt of `session-id`'s running eval: reply :interrupted to the
-  in-flight eval and give the session a fresh worker. jolt can't kill a running
-  thread, so the stuck eval is abandoned (it keeps running until it returns); the
-  session stays responsive. Returns :ok or :idle."
+  "Interrupt `session-id`'s running eval by setting its interrupt token; the eval
+  aborts at the next safe point and the worker replies :interrupted, then keeps
+  serving. Returns :ok if an eval was in flight, else :idle."
   [session-id]
   (if-let [session (get @sessions session-id)]
     (let [cur @(:current session)]
       (if cur
-        (do ((:reply cur) {"status" ["interrupted" "done"]})
-            ;; abandon the stuck worker; install a fresh chan + worker.
-            (a/close! (:chan session))
-            (let [fresh (assoc session :chan (a/chan 64) :current (atom nil))]
-              (spawn-worker fresh)
-              (swap! sessions assoc session-id fresh))
-            :ok)
+        (do (jolt.host/interrupt! (:token cur)) :ok)
         :idle))
     :idle))
 

@@ -1,9 +1,11 @@
 (ns nrepl.middleware.interruptible-eval
   "Adds the `interrupt` op. Eval itself runs on the session's worker (see
-  nrepl.middleware.session); interrupt abandons a stuck eval and gives the session
-  a fresh worker. jolt can't kill a running thread, so this is best-effort: the
-  in-flight eval is replied to as :interrupted and the session stays responsive,
-  but the abandoned computation runs to completion in the background."
+  nrepl.middleware.session), which evaluates under jolt.host/run-interruptible;
+  interrupt sets the in-flight eval's interrupt token, so it aborts at the next
+  safe point (Chez's engine timer, polled at call/loop back-edges) and the worker
+  is reused — the computation is not abandoned. A compute-bound eval (even a tight
+  loop) is interrupted promptly; one blocked in a foreign call (socket recv,
+  sleep) aborts when it returns to Scheme."
   (:require [jolt.nrepl :as server]
             [nrepl.middleware.session :as session]))
 

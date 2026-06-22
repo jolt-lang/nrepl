@@ -58,14 +58,17 @@ to `"done"`. `combine-responses`, `response-values`, `new-session`, and the
 
 ## Notes for jolt
 
-- **Interrupt is best-effort.** Chez Scheme can't kill a running thread, so
-  `interrupt` replies `:interrupted` to the in-flight eval and gives the session a
-  fresh worker; the abandoned computation runs to completion in the background.
-- **Eval namespace is process-global.** `load-string` resolves against the
-  current `in-ns`, not a thread-local `*ns*`, so the worker sets the session's ns
-  before each eval. A normal editor (one eval session + a read-only tooling
-  session) won't see interleaving; heavy concurrent ns-changing evals across
-  sessions could.
+- **Interrupt is real.** Each eval runs under `jolt.host/run-interruptible`;
+  `interrupt` sets the in-flight eval's token and it aborts at the next safe point
+  (Chez's engine timer is polled at call/loop back-edges), then the worker is
+  reused. A compute-bound eval — even a tight loop — is interrupted promptly; one
+  blocked in a foreign call (socket recv, sleep) aborts when it returns to Scheme.
+- **`*ns*` is thread-local.** Each session worker is its own thread with its own
+  current namespace (jolt's `chez-current-ns` is a thread-parameter), so sessions
+  eval concurrently in different namespaces without clobbering each other.
+
+Both require a jolt that provides `jolt.host/run-interruptible` and a thread-local
+`*ns*` (jolt-lang/jolt#172 and later).
 
 The official nREPL implementation can't run unchanged on jolt — its core is tied
 to `java.util.concurrent` executors, compiled Java helper classes, a dynamic
