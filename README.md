@@ -37,10 +37,9 @@ Connect your editor (CIDER / Calva / Cursive) to the port in `.nrepl-port`. Your
 project's deps are on the source roots and its native libs are loaded, so
 `(require '[some.lib])` works in the session.
 
-Each session keeps its own current namespace (jolt's `*ns*` is thread-local) and
-runs evals on a dedicated serialized worker thread, so sessions are isolated and a
-long eval doesn't block other ops. `interrupt` aborts a running eval — even a
-tight loop — and the worker keeps serving.
+Each session keeps its own current namespace and runs evals on a dedicated
+serialized worker thread, so sessions are isolated and a long eval doesn't block
+other ops. `interrupt` aborts the running eval and the session keeps serving.
 
 ## Client
 
@@ -59,17 +58,9 @@ to `"done"`. `combine-responses`, `response-values`, `new-session`, and the
 
 ## Notes for jolt
 
-- **Interrupt is real.** Each eval runs under `jolt.host/run-interruptible`;
-  `interrupt` sets the in-flight eval's token and it aborts at the next safe point
-  (Chez's engine timer is polled at call/loop back-edges), then the worker is
-  reused. A compute-bound eval — even a tight loop — is interrupted promptly; one
-  blocked in a foreign call (socket recv, sleep) aborts when it returns to Scheme.
-- **`*ns*` is thread-local.** Each session worker is its own thread with its own
-  current namespace (jolt's `chez-current-ns` is a thread-parameter), so sessions
-  eval concurrently in different namespaces without clobbering each other.
-
-Both rely on jolt host capabilities — `jolt.host/run-interruptible` and a
-thread-local `*ns*` — so they need a recent jolt (the Chez `main` line).
+`interrupt` aborts a compute-bound eval at the next safe point, but it can't
+preempt one blocked in a foreign call (socket recv, sleep) — that aborts only once
+the call returns to Scheme.
 
 The official nREPL implementation can't run unchanged on jolt — its core is tied
 to `java.util.concurrent` executors, compiled Java helper classes, a dynamic
