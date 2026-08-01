@@ -77,27 +77,31 @@
 
 ;; --- stacktrace -------------------------------------------------------------
 
+;; both read what jolt.nrepl recorded about the last failing eval — *e for the
+;; cause chain, last-error-backtrace for the frames
 (deftest analyze-last-stacktrace
-  (let [t (h/conn)]
-    (try
-      (h/eval-code t "(throw (ex-info \"analyzed\" {:k :v}))" :ns "user")
-      (let [r (h/combine (h/message t {:op "analyze-last-stacktrace"}))]
-        (is (= "clojure.lang.ExceptionInfo" (:class r)))
-        (is (= "analyzed" (:message r)))
-        (is (= "{:k :v}" (:data r))))
-      (finally (nrepl/close t)))))
-
-(deftest analyze-last-stacktrace-frames
-  (testing "frames carry the file and line jolt recorded at throw time"
+  (when h/jolt-nrepl-seams?
     (let [t (h/conn)]
       (try
-        (h/eval-code t "(ns stacktrace-test-target) (defn thrower [] (throw (ex-info \"framed\" {})))" :ns "user")
-        (h/eval-code t "(stacktrace-test-target/thrower)" :ns "user")
-        (let [r (h/combine (h/message t {:op "analyze-last-stacktrace"}))
-              frames (:stacktrace r)]
-          (is (= "framed" (:message r)))
-          (is (some #(= "stacktrace-test-target/thrower" (get % "name")) frames)))
+        (h/eval-code t "(throw (ex-info \"analyzed\" {:k :v}))" :ns "user")
+        (let [r (h/combine (h/message t {:op "analyze-last-stacktrace"}))]
+          (is (= "clojure.lang.ExceptionInfo" (:class r)))
+          (is (= "analyzed" (:message r)))
+          (is (= "{:k :v}" (:data r))))
         (finally (nrepl/close t))))))
+
+(deftest analyze-last-stacktrace-frames
+  (when h/jolt-nrepl-seams?
+    (testing "frames carry the file and line jolt recorded at throw time"
+      (let [t (h/conn)]
+        (try
+          (h/eval-code t "(ns stacktrace-test-target) (defn thrower [] (throw (ex-info \"framed\" {})))" :ns "user")
+          (h/eval-code t "(stacktrace-test-target/thrower)" :ns "user")
+          (let [r (h/combine (h/message t {:op "analyze-last-stacktrace"}))
+                frames (:stacktrace r)]
+            (is (= "framed" (:message r)))
+            (is (some #(= "stacktrace-test-target/thrower" (get % "name")) frames)))
+          (finally (nrepl/close t)))))))
 
 ;; --- out --------------------------------------------------------------------
 

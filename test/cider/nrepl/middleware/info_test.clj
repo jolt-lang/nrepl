@@ -12,7 +12,10 @@
         (is (contains? (get r :ops) "info"))
         (is (contains? (get r :ops) "eldoc"))
         (is (contains? (get r :ops) "complete"))
-        (is (get-in r [:versions "cider-nrepl"])))
+        ;; CIDER also wants a cider-nrepl version, which needs jolt.nrepl's
+        ;; register-version!; Calva goes by the op list alone
+        (when h/jolt-nrepl-seams?
+          (is (get-in r [:versions "cider-nrepl"]))))
       (finally (nrepl/close t)))))
 
 (deftest info-for-a-var

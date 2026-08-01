@@ -115,3 +115,8 @@ Two things read differently from the JVM:
 `jolt -M:test` runs the suite (bencode, client, session, completion, lookup,
 interrupt, and the cider ops) against an in-process server with the middleware
 installed.
+
+The suite probes for the jolt seams named above and skips the tests covering
+them when they are absent, the same way the library itself degrades. It says
+which tier it ran at on the first line, so a green run doesn't hide what it
+skipped.

@@ -4,6 +4,7 @@
   server (built-in handler + this library's middleware) is started lazily by
   nrepl.test-helpers the first time a test connects."
   (:require [clojure.test :as t]
+            [nrepl.test-helpers :as h]
             [nrepl.bencode-test]
             [nrepl.core-test]
             [nrepl.middleware.session-test]
@@ -17,6 +18,7 @@
             [cider.nrepl.middleware.misc-test]))
 
 (defn -main [& _]
+  (h/report-capabilities!)
   (let [r (t/run-tests)]
     (println (str "\n========== TOTAL =========="))
     (println (str "tests=" (:test r) " pass=" (:pass r) " fail=" (:fail r) " error=" (:error r)))
