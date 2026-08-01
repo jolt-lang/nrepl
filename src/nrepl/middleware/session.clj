@@ -40,10 +40,12 @@
   (future
     (loop []
       (when-let [job (a/<!! (:chan session))]
-        (let [{:keys [code ns reply id]} job
+        (let [{:keys [code ns reply id thunk]} job
               token (jolt.host/make-interrupt)]
           (reset! (:current session) {:id id :reply reply :token token})
-          (try (run-eval session code ns reply token)
+          (try (if thunk
+                 (jolt.host/run-interruptible token thunk)
+                 (run-eval session code ns reply token))
                (catch :default e
                  (if (:jolt/interrupted (ex-data e))
                    (reply {"status" ["interrupted" "done"]})
@@ -61,6 +63,23 @@
     (spawn-worker session)
     (swap! sessions assoc (:id session) session)
     session))
+
+(defn submit!
+  "Queue `thunk` on `session-id`'s worker, to run like an eval would: serialized
+  with that session's other work, under an interrupt token, with the same error
+  reply if it throws. `reply` and `id` are the requesting message's, so an
+  `interrupt` while it runs answers on the right message.
+
+  This is how an op that can take a while — running a test suite — stays off the
+  connection's reader thread. Left there it would block every other op on the
+  connection for the duration, `interrupt` included.
+
+  Returns true if it was queued, false when there is no such session (the caller
+  then runs it inline)."
+  [session-id id reply thunk]
+  (if-let [session (get @sessions session-id)]
+    (do (a/>!! (:chan session) {:thunk thunk :id id :reply reply}) true)
+    false))
 
 (defn interrupt!
   "Interrupt `session-id`'s running eval by setting its interrupt token; the eval

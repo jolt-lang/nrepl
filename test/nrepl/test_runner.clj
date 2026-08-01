@@ -9,7 +9,12 @@
             [nrepl.middleware.session-test]
             [nrepl.middleware.completion-test]
             [nrepl.middleware.lookup-test]
-            [nrepl.middleware.interruptible-eval-test]))
+            [nrepl.middleware.interruptible-eval-test]
+            [cider.nrepl.middleware.info-test]
+            [cider.nrepl.middleware.complete-test]
+            [cider.nrepl.middleware.ns-test]
+            [cider.nrepl.middleware.test-test]
+            [cider.nrepl.middleware.misc-test]))
 
 (defn -main [& _]
   (let [r (t/run-tests)]
