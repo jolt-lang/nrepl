@@ -33,7 +33,7 @@ composes them over the built-in handler:
 
 ```clojure
 {:deps {jolt-lang/nrepl {:git/url "https://github.com/jolt-lang/nrepl"
-                         :git/sha "<full-sha>"}}
+                         :git/tag "v0.1.0" :git/sha "<sha-prefix>"}}
  :nrepl/middleware [nrepl.middleware/default-middleware
                     cider.nrepl/cider-middleware]}
 ```
@@ -56,10 +56,10 @@ other ops. `interrupt` aborts the running eval and the session keeps serving.
 Leave `cider.nrepl/cider-middleware` out if you only want eval: the cider ops are
 what pull in orchard and compliment.
 
-The ops run on jolt 0.5.13, and three of them get better on a jolt built after
-it: `describe` advertises a cider-nrepl version (CIDER checks for one),
-`out-subscribe` stops echoing an eval's own output back a second time, and the
-frames in `analyze-last-stacktrace` are filled in.
+Three of the ops need jolt 0.5.14: `describe` advertises a cider-nrepl version
+(CIDER checks for one), `out-subscribe` stops echoing an eval's own output back a
+second time, and the frames in `analyze-last-stacktrace` are filled in. On 0.5.13
+the rest still work and those three degrade.
 
 ## Client
 
