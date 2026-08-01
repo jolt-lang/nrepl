@@ -1,15 +1,25 @@
 {:paths ["src"]
 
+ ;; orchard resolves var/namespace metadata and clojuredocs entries; compliment
+ ;; does completion. Both run on jolt as published, and cider-nrepl uses the same
+ ;; two, so the ops answer with the data an editor already knows how to read.
+ ;; spec.alpha is orchard's (it reports a var's spec alongside its docstring).
+ :deps {cider/orchard {:mvn/version "0.44.0"}
+        compliment/compliment {:mvn/version "0.8.0"}
+        org.clojure/spec.alpha {:mvn/version "0.5.238"}}
+
  ;; The client transport and the session worker bind libc (sockets + the process
  ;; symbols) through jolt.ffi; declared :process so jolt loads them before the
- ;; namespaces are required. No external Clojure deps.
+ ;; namespaces are required.
  :jolt/native [{:name "libc (POSIX sockets)" :process true}]
 
- ;; This library's server middleware (sessions, interruptible-eval, completion,
- ;; lookup) — jolt.nrepl composes them over its built-in handler. A consuming
- ;; project adds this lib and copies this line; declared here so `jolt nrepl` in
- ;; this repo serves the full stack.
- :nrepl/middleware [nrepl.middleware/default-middleware]
+ ;; This library's server middleware — jolt.nrepl composes them over its built-in
+ ;; handler. A consuming project adds this lib and copies this line; declared here
+ ;; so `jolt nrepl-server` in this repo serves the full stack.
+ ;;   nrepl.middleware/default-middleware  sessions, interruptible eval, completion, lookup
+ ;;   cider.nrepl/cider-middleware         the cider-nrepl ops (info, complete, test, …)
+ :nrepl/middleware [nrepl.middleware/default-middleware
+                    cider.nrepl/cider-middleware]
 
  :aliases {:test {:extra-paths ["test"]
                   :main-opts ["-m" "nrepl.test-runner"]}}
