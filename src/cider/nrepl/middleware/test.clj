@@ -62,7 +62,9 @@
 
 (defn- record-result! [m]
   (let [ns (or (some-> (:ns m) ns-name) (:testing-ns @current-report))
-        v (last test/*testing-vars*)
+        ;; innermost: *testing-vars* is built with conj, so the var under test
+        ;; is at the front
+        v (first test/*testing-vars*)
         v-name (or (:name (meta v)) unknown-var)]
     (swap! current-report
            #(-> %
@@ -105,7 +107,12 @@
   is reported as an error against the var."
   [v]
   (when-let [t (:test (meta v))]
-    (binding [test/*testing-vars* (conj test/*testing-vars* v)]
+    ;; A FRESH var stack, not a conj onto whatever the calling thread had. This
+    ;; runs a test on a client's behalf, so the client's own test context is not
+    ;; an enclosing scope — and under a runtime that conveys dynamic bindings to
+    ;; the session thread, inheriting it put the client's var in this list and
+    ;; every result was filed under that name.
+    (binding [test/*testing-vars* (list v)]
       (test/do-report {:type :begin-test-var :var v})
       (let [started (System/currentTimeMillis)
             result (try (t) ::ok (catch :default e e))
