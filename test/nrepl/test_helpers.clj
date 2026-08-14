@@ -54,7 +54,8 @@
   []
   @server-up
   (loop [attempts 200]
-    (let [t (try (nrepl/connect "127.0.0.1" port) (catch :default e (if (pos? attempts) nil (throw e))))]
+    (let [t (try (nrepl/connect "127.0.0.1" port {:recv-timeout-secs 120})
+                 (catch :default e (if (pos? attempts) nil (throw e))))]
       (or t (do (Thread/sleep 100) (recur (dec attempts)))))))
 
 (defn eval-code

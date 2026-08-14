@@ -50,11 +50,34 @@
 
 (def ^:private bufsize 65536)
 
+(ffi/defcfn c-setsockopt "setsockopt" [:int :int :int :pointer :int] :int)
+
+(defn- set-recv-timeout!
+  "SO_RCVTIMEO: recv returns instead of blocking forever once `secs` pass with
+  no data. A struct timeval is two longs (or long+suseconds), so 16 zeroed
+  bytes with the seconds in the first word covers both 64-bit layouts.
+  SOL_SOCKET is 1 on Linux and 0xffff on the BSDs; SO_RCVTIMEO is 20 and
+  0x1006 respectively."
+  [fd secs]
+  (let [[sol so] (if (= "Mac OS X" (System/getProperty "os.name"))
+                   [0xffff 0x1006] [1 20])
+        tv (ffi/alloc 16)]
+    (try
+      (dotimes [i 16] (ffi/write tv :uint8 i 0))
+      (ffi/write tv :long 0 secs)
+      (c-setsockopt fd sol so tv 16)
+      (finally (ffi/free tv)))))
+
 (defn connect
-  "Open a connection to an nREPL server. Returns a transport (an opaque map)."
-  [host port]
-  (let [fd (raw-connect host port)]
-    {:fd fd :buf (atom "") :lock (Object.)}))
+  "Open a connection to an nREPL server. Returns a transport (an opaque map).
+  `:recv-timeout-secs` bounds every read: a server that stops replying turns
+  into a nil message (connection treated as closed) instead of a caller
+  blocked in recv forever."
+  ([host port] (connect host port nil))
+  ([host port {:keys [recv-timeout-secs]}]
+   (let [fd (raw-connect host port)]
+     (when recv-timeout-secs (set-recv-timeout! fd recv-timeout-secs))
+     {:fd fd :buf (atom "") :lock (Object.)})))
 
 (defn send
   "Send message map `msg` over `transport`."
