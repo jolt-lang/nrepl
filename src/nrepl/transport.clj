@@ -29,8 +29,8 @@
         service (ffi/string->ptr (str port))
         respp (ffi/alloc (ffi/sizeof :pointer))
         hints (ffi/alloc 48)]
-    (dotimes [i 48] (ffi/write hints :uint8 i 0))
-    (ffi/write hints :int O-ai-socktype 1)            ; SOCK_STREAM
+    (dotimes [i 48] (ffi/write hints :uint8 0 i))
+    (ffi/write hints :int 1 O-ai-socktype)            ; SOCK_STREAM
     (try
       (when-not (zero? (c-getaddrinfo node service hints respp))
         (throw (ex-info (str "nREPL connect: cannot resolve " host) {:host host})))
@@ -63,8 +63,8 @@
                    [0xffff 0x1006] [1 20])
         tv (ffi/alloc 16)]
     (try
-      (dotimes [i 16] (ffi/write tv :uint8 i 0))
-      (ffi/write tv :long 0 secs)
+      (dotimes [i 16] (ffi/write tv :uint8 0 i))
+      (ffi/write tv :long secs 0)
       (c-setsockopt fd sol so tv 16)
       (finally (ffi/free tv)))))
 
