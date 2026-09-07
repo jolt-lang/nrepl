@@ -4,6 +4,7 @@
   bencode messages. The server side lives in jolt core (jolt.nrepl)."
   (:require [clojure.string :as str]
             [jolt.ffi :as ffi]
+            [jolt.io-poller :as poller]
             [nrepl.bencode :as bencode]))
 
 (ffi/load-library)
@@ -14,6 +15,7 @@
 (ffi/defcfn c-send         "send"         [:int :pointer :size_t :int] :ssize_t :blocking)
 (ffi/defcfn c-getaddrinfo  "getaddrinfo"  [:pointer :pointer :pointer :pointer] :int :blocking)
 (ffi/defcfn c-freeaddrinfo "freeaddrinfo" [:pointer] :void)
+(ffi/defcfn c-poll         "poll"         [:pointer :int :int] :int :blocking)
 
 (def ^:private macos?
   (str/includes? (str/lower-case (or (System/getProperty "os.name") "")) "mac"))
@@ -68,16 +70,58 @@
       (c-setsockopt fd sol so tv 16)
       (finally (ffi/free tv)))))
 
+(def interrupt-slice-ms
+  "How long one `recv` waits for the socket to become readable before checking
+  whether its thread has been interrupted. jolt's Thread.interrupt sets the
+  flag and does not reach a thread inside a blocking syscall (measured: a
+  parked recv ran its whole SO_RCVTIMEO after an interrupt), so `recv` waits
+  in slices of this length and checks the flag between them, throwing
+  InterruptedException — the exception an interrupted sleep throws. A caller
+  that cancels an eval gets its thread back within one slice rather than one
+  receive timeout; the receive timeout stays the bound on the read as a whole."
+  250)
+
+(def ^:private eintr 4)
+
+(defn- await-readable!
+  "Park until `fd` has something to read (or has hung up), in
+  `interrupt-slice-ms` slices: :ready, or :timeout once `timeout-ms` (nil for
+  none) has elapsed with nothing to read. Throws InterruptedException if the
+  thread was interrupted between slices."
+  [fd timeout-ms]
+  (let [deadline (when (and timeout-ms (pos? timeout-ms)) (+ (System/currentTimeMillis) timeout-ms))
+        pf (ffi/alloc 8)]
+    (try
+      ;; struct pollfd { int fd; short events; short revents; }: POLLIN (1) in
+      ;; the low half of the int at offset 4, revents zeroed in the high half.
+      (dotimes [i 8] (ffi/write pf :uint8 0 i))
+      (ffi/write pf :int fd 0)
+      (ffi/write pf :int 1 4)
+      (loop []
+        (when (Thread/interrupted)
+          (throw (jolt.host/throwable "java.lang.InterruptedException" "recv interrupted")))
+        (let [now (System/currentTimeMillis)
+              slice (if deadline (min interrupt-slice-ms (max 0 (- deadline now))) interrupt-slice-ms)
+              pr (c-poll pf 1 (int slice))]
+          (cond
+            (pos? pr) :ready
+            (and deadline (>= (System/currentTimeMillis) deadline)) :timeout
+            (zero? pr) (recur)
+            (= (poller/errno) eintr) (recur)
+            :else :ready)))
+      (finally (ffi/free pf)))))
+
 (defn connect
   "Open a connection to an nREPL server. Returns a transport (an opaque map).
   `:recv-timeout-secs` bounds every read: a server that stops replying turns
   into a nil message (connection treated as closed) instead of a caller
-  blocked in recv forever."
+  blocked in recv forever. Reads are interruptible: see `interrupt-slice-ms`."
   ([host port] (connect host port nil))
   ([host port {:keys [recv-timeout-secs]}]
    (let [fd (raw-connect host port)]
      (when recv-timeout-secs (set-recv-timeout! fd recv-timeout-secs))
-     {:fd fd :buf (atom "") :lock (Object.)})))
+     {:fd fd :buf (atom "") :lock (Object.)
+      :recv-timeout-ms (when recv-timeout-secs (* 1000 recv-timeout-secs))})))
 
 (defn send
   "Send message map `msg` over `transport`."
@@ -96,16 +140,19 @@
 
 (defn recv
   "Receive the next message from `transport`, blocking until one is available or
-  the connection closes (then nil)."
-  [{:keys [fd buf]}]
+  the connection closes or the receive timeout elapses (then nil). Throws
+  InterruptedException when the reading thread is interrupted, within
+  `interrupt-slice-ms`."
+  [{:keys [fd buf recv-timeout-ms]}]
   (loop []
     (let [r (bencode/decode @buf 0)]
       (if r
         (do (swap! buf subs (second r)) (first r))
-        (let [b (ffi/alloc bufsize)
-              chunk (try (let [k (c-recv fd b bufsize 0)]
-                           (when (pos? k) (String. (ffi/read-array b k) "ISO-8859-1")))
-                         (finally (ffi/free b)))]
-          (when chunk (swap! buf str chunk) (recur)))))))
+        (when (= :ready (await-readable! fd recv-timeout-ms))
+          (let [b (ffi/alloc bufsize)
+                chunk (try (let [k (c-recv fd b bufsize 0)]
+                             (when (pos? k) (String. (ffi/read-array b k) "ISO-8859-1")))
+                           (finally (ffi/free b)))]
+            (when chunk (swap! buf str chunk) (recur))))))))
 
 (defn close [{:keys [fd]}] (c-close fd) nil)
