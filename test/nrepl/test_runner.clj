@@ -7,6 +7,7 @@
             [nrepl.test-helpers :as h]
             [nrepl.bencode-test]
             [nrepl.core-test]
+            [nrepl.transport-test]
             [nrepl.middleware.session-test]
             [nrepl.middleware.completion-test]
             [nrepl.middleware.lookup-test]
