@@ -86,6 +86,10 @@ An unresolvable `caught` symbol gets an `error` response (the eval still runs),
 and `nrepl.middleware.caught/print? "true"` puts the printed message back in
 the response under `"nrepl.middleware.caught/throwable"`.
 
+The hook fires for evals that name a session — that is where the error is
+attached. A sessionless eval's error still reaches the client (`err` +
+`eval-error`), but no hook runs for it.
+
 Three of the ops need jolt 0.5.14: `describe` advertises a cider-nrepl version
 (CIDER checks for one), `out-subscribe` stops echoing an eval's own output back a
 second time, and the frames in `analyze-last-stacktrace` are filled in. On 0.5.13

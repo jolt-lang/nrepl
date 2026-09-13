@@ -13,8 +13,7 @@
   [handler]
   (server/register-ops! "interrupt")
   (fn [request]
-    (if (= "interrupt" (get request "op"))
-      (let [sid (or (get request "interrupt-id") (get request "session"))
-            r (session/interrupt! (get request "session"))]
+      (if (= "interrupt" (get request "op"))
+        (let [r (session/interrupt! (get request "session"))]
         (server/respond request {"status" (if (= r :ok) ["done"] ["session-idle" "done"])}))
       (handler request))))
