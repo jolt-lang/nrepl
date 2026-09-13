@@ -11,6 +11,7 @@ cider-nrepl op set editors expect:
 | Feature | op(s) | ns |
 | --- | --- | --- |
 | Stateful, isolated sessions | `clone` `close` `ls-sessions` `eval` | `nrepl.middleware.session` |
+| Interactive error hook | — | `nrepl.middleware.caught` |
 | Interruptible eval | `interrupt` | `nrepl.middleware.interruptible-eval` |
 | Autocomplete | `completions` | `nrepl.middleware.completion` |
 | Docs / eldoc | `lookup` | `nrepl.middleware.lookup` |
@@ -55,6 +56,35 @@ other ops. `interrupt` aborts the running eval and the session keeps serving.
 
 Leave `cider.nrepl/cider-middleware` out if you only want eval: the cider ops are
 what pull in orchard and compliment.
+
+### Interactive error hook
+
+`nrepl.middleware.caught` (in `default-middleware`, outermost) ports upstream's
+`wrap-caught`: a hook for errors that should be conveyed interactively, like
+`clojure.main/repl`'s `:caught` option. When an eval fails, the error goes to
+the hook before the eval-error response goes on the wire; whatever the hook
+prints is sent to the client as `out`/`err` responses. This is what libraries
+like [rephrase](https://github.com/seancorfield/rephrase) plug into:
+
+```clojure
+;; in the request (string keys over the wire):
+{"op" "eval", "code" "(+ 1 nil)",
+ "nrepl.middleware.caught/caught" "org.corfield.rephrase/repl-caught"}
+
+;; or as server-side middleware, how wrap-rephrase does it:
+(defn wrap-rephrase [h]
+  (fn [msg] (-> msg (assoc :nrepl.middleware.caught/caught 'rephrase/repl-caught) (h))))
+```
+
+Middleware that assoc's the option must be listed BEFORE
+`nrepl.middleware/default-middleware` in `:nrepl/middleware`, or the session
+middleware never sees it (first-listed is outermost). `nrepl.middleware` also
+provides `set-descriptor!`, which ported libraries (wrap-rephrase among them)
+require at load.
+
+An unresolvable `caught` symbol gets an `error` response (the eval still runs),
+and `nrepl.middleware.caught/print? "true"` puts the printed message back in
+the response under `"nrepl.middleware.caught/throwable"`.
 
 Three of the ops need jolt 0.5.14: `describe` advertises a cider-nrepl version
 (CIDER checks for one), `out-subscribe` stops echoing an eval's own output back a

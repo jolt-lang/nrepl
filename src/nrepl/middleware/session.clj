@@ -17,12 +17,26 @@
   could therefore interleave; a normal editor (one eval session + a read-only
   tooling session) doesn't hit this."
   (:require [clojure.core.async :as a]
+            [clojure.string :as str]
             [jolt.nrepl :as server]
-            [nrepl.bencode :as bencode]))
+            [nrepl.bencode :as bencode]
+            [nrepl.middleware.caught :as caught]))
 
 (def ^:private sessions (atom {}))   ;; id -> session
 
-(defn- run-eval [session code-wire ns-str reply token]
+(defn- last-eval-exception
+  "*e holds the exception server/evaluate just reported — the only handle on
+  the error object itself, which its return map doesn't carry. Validated
+  against the reported :err so a concurrent session's eval overwriting *e in
+  the window between the two reads can't substitute a different error. nil on
+  a jolt whose evaluate doesn't set *e (the hook then doesn't fire — degraded,
+  not broken)."
+  [err]
+  (let [e *e]
+    (when (and e err (str/starts-with? err (server/err-msg e)))
+      e)))
+
+(defn- run-eval [session code-wire ns-str reply caught? token]
   (let [code (bencode/wire-> code-wire)
         ns-atom (:ns session)
         ;; the actual evaluation runs interruptibly: interrupt! on `token` aborts
@@ -32,20 +46,24 @@
     (reset! ns-atom ns)
     (when (seq out) (reply {"out" out}))
     (if err
-      (do (reply {"err" (str err "\n")})
-          (reply {"ex" (str err) "status" ["eval-error" "done"]}))
+      (let [e (last-eval-exception err)]
+        (reply {"err" (str err "\n")})
+        ;; the throwable rides the eval-error response only, so a hook runs
+        ;; once per error; wrap-caught dissocs it before the wire
+        (reply (cond-> {"ex" (str err) "status" ["eval-error" "done"]}
+                 (and caught? e) (assoc caught/throwable-key e))))
       (reply {"value" value "ns" ns "status" ["done"]}))))
 
 (defn- spawn-worker [session]
   (future
     (loop []
       (when-let [job (a/<!! (:chan session))]
-        (let [{:keys [code ns reply id thunk]} job
+        (let [{:keys [code ns reply id thunk caught?]} job
               token (jolt.host/make-interrupt)]
           (reset! (:current session) {:id id :reply reply :token token})
           (try (if thunk
                  (jolt.host/run-interruptible token thunk)
-                 (run-eval session code ns reply token))
+                 (run-eval session code ns reply caught? token))
                (catch :default e
                  (if (:jolt/interrupted (ex-data e))
                    (reply {"status" ["interrupted" "done"]})
@@ -124,6 +142,7 @@
                {:code (if (= op "load-file") (get request "file") (get request "code"))
                 :ns (get request "ns")
                 :id (get request "id")
-                :reply (:reply request)})
+                :reply (:reply request)
+                :caught? (get request caught/enabled-key)})
 
         :else (handler request)))))

@@ -12,6 +12,7 @@
             [nrepl.middleware.completion-test]
             [nrepl.middleware.lookup-test]
             [nrepl.middleware.interruptible-eval-test]
+            [nrepl.middleware.caught-test]
             [cider.nrepl.middleware.info-test]
             [cider.nrepl.middleware.complete-test]
             [cider.nrepl.middleware.ns-test]
