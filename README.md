@@ -86,6 +86,15 @@ An unresolvable `caught` symbol gets an `error` response (the eval still runs),
 and `nrepl.middleware.caught/print? "true"` puts the printed message back in
 the response under `"nrepl.middleware.caught/throwable"`.
 
+Like upstream, `wrap-caught` assocs the effective hook onto the request under
+`:nrepl.middleware.caught/caught-fn` before calling the next handler — a var
+when resolved from `caught`, otherwise the request's fn value, otherwise the
+default — so middleware further in the stack (the rest of the wrap-rephrase
+pattern) sees a callable. The `caught-fn` and `print?` options may also ride
+the eval-error response itself (keyword keys) when the request didn't set
+them; request options win. Neither the hook nor the option keys ever reach
+the wire.
+
 The hook fires for evals that name a session — that is where the error is
 attached. A sessionless eval's error still reaches the client (`err` +
 `eval-error`), but no hook runs for it.
