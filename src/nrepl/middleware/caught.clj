@@ -67,6 +67,14 @@
   (not (or (nil? v) (= "" v) (= "false" v) (= "0" v)
            (= false v) (= [] v))))
 
+(defn- req-contains?
+  "Whether `kw` (or its full string form — see req-get) is present in
+  `request`, regardless of value: distinguishes an option the request set
+  from one it left to the response."
+  [request kw]
+  (or (contains? request kw)
+      (contains? request (subs (str kw) 1))))
+
 (defn- resolve-caught
   "The caught option names a var by fully-qualified symbol (a string over the
   wire, a symbol from server-side middleware). Replies an error status when it
@@ -95,23 +103,42 @@
     (flush [_] nil)
     (close [_] nil)))
 
+(defn- strip-config
+  "Remove this middleware's option slots from a response: a caught-fn is a
+  function and would crash bencode, and the raw print? flag is internal.
+  Upstream dissocs its configuration-keys from every response likewise."
+  [resp]
+  (dissoc resp caught-fn-key print?-key
+          "nrepl.middleware.caught/caught-fn" "nrepl.middleware.caught/print?"))
+
 (defn- caught-reply
   "Wrap `request`'s :reply: a response carrying `throwable-key` passes the
-  error to `caught-fn` with *out*/*err* bound to replying writers, then goes on
-  without it (with the printed message, when `print?`)."
-  [request {:keys [caught-fn print?]}]
+  error to the hook with *out*/*err* bound to replying writers, then goes on
+  without it (with the printed message, when print?).
+
+  Hook choice per response: `request-fn` (resolved from the request's options)
+  wins; else a caught-fn the RESPONSE carries (upstream lets options ride the
+  responses when the request set none); else the *caught-fn* default. print?
+  follows the same request-over-response rule."
+  [request {:keys [request-fn request-print?]}]
   (let [reply (:reply request)]
     (fn [resp]
       (if-let [e (get resp throwable-key)]
-        (do (binding [*out* (replying-writer reply "out")
-                      *err* (replying-writer reply "err")]
-              (try (caught-fn e)
-                   (catch :default ex
-                     ;; a broken hook must not eat the eval-error response
-                     (reply {"err" (str "caught hook error: " (server/err-msg ex) "\n")}))))
-            (reply (cond-> (dissoc resp throwable-key)
-                     print? (assoc "nrepl.middleware.caught/throwable" (server/err-msg e)))))
-        (reply resp)))))
+        (let [caught-fn (or request-fn
+                            (let [v (get resp caught-fn-key)] (when (fn? v) v))
+                            *caught-fn*)
+              print? (if (nil? request-print?)
+                       (truthy? (get resp print?-key))
+                       request-print?)]
+          (binding [*out* (replying-writer reply "out")
+                    *err* (replying-writer reply "err")]
+            (try (caught-fn e)
+                 (catch :default ex
+                   ;; a broken hook must not eat the eval-error response
+                   (reply {"err" (str "caught hook error: " (server/err-msg ex) "\n")}))))
+          (reply (cond-> (strip-config (dissoc resp throwable-key))
+                    print? (assoc "nrepl.middleware.caught/throwable" (server/err-msg e)))))
+        (reply (strip-config resp))))))
 
 (defn wrap-caught
   "Middleware that provides a hook for any error that should be conveyed
@@ -139,19 +166,32 @@
   * `nrepl.middleware.caught/print?` — if logical true, the printed message of
   the error is returned in the response under
   \"nrepl.middleware.caught/throwable\" (otherwise the error is elided).
-  Defaults to false."
+  Defaults to false.
+
+  The caught-fn and print? options may also ride the RESPONSES sent via the
+  request's reply fn (keyword keys) when the request didn't set them — how an
+  inner middleware swaps in its own hook. Options in the request are preferred.
+  Whatever hook is chosen, wrap-caught assocs it onto the request under
+  `nrepl.middleware.caught/caught-fn` before calling the inner handler, so
+  middleware further in (e.g. org.corfield.rephrase's wrap-rephrase pattern)
+  sees a callable — mirroring upstream nREPL."
   [handler]
   (fn [request]
     (let [caught-var (resolve-caught request)
           fn-val (req-get request caught-fn-key)
-          caught-fn (or caught-var
-                        (when (fn? fn-val) fn-val)
-                        *caught-fn*)
-          print? (truthy? (req-get request print?-key))]
+          ;; nil = the request set no hook, so a response-level caught-fn wins
+          request-fn (or caught-var
+                         (when (fn? fn-val) fn-val))
+          ;; the request always carries a callable for inner middleware
+          caught-fn (or request-fn *caught-fn*)
+          ;; nil = the request didn't set print?, so a response may
+          request-print? (when (req-contains? request print?-key)
+                           (truthy? (req-get request print?-key)))]
       (handler (assoc request
                       enabled-key true
-                      :reply (caught-reply request {:caught-fn caught-fn
-                                                    :print? print?}))))))
+                      caught-fn-key caught-fn
+                      :reply (caught-reply request {:request-fn request-fn
+                                                    :request-print? request-print?}))))))
 
 ;; alter-meta! with the same key nrepl.middleware/set-descriptor! writes,
 ;; rather than requiring nrepl.middleware: this ns is part of its
