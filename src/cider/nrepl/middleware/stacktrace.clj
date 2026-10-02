@@ -6,7 +6,8 @@
   Frames come from Throwable->map's :trace, which jolt fills in only for
   exceptions it carries a trace for — the cause chain, message and ex-data are
   always there, and that is what an editor shows first."
-  (:require [clojure.string :as str]
+  (:require [clojure.repl :as repl]
+            [clojure.string :as str]
             [cider.nrepl.middleware.util :as util]))
 
 (def ^:private last-error-backtrace
@@ -23,11 +24,21 @@
 
 (defn- frame
   "One stack frame in the shape CIDER reads. A JVM-shaped frame is
-  [class method file line]."
+  [class method file line]. A Clojure fn's class (ns$fn, ns$fn$fn__12 for an
+  anonymous one) also gets the :ns, :fn and :var that orchard derives from it by
+  demunging, which is what CIDER navigates by."
   [f]
-  (let [[cls method file line] (if (sequential? f) f [f nil nil nil])]
+  (let [[cls method file line] (if (sequential? f) f [f nil nil nil])
+        cls (str cls)
+        [ns fn & anons] (when (str/includes? cls "$")
+                          (str/split (repl/demunge cls) #"/"))]
     (cond-> {:name (str cls (when method (str "/" method)))
+             :class cls
              :type "clj"}
+      method (assoc :method (str method))
+      fn (assoc :ns ns
+                :fn (str/join "/" (cons fn anons))
+                :var (str ns "/" fn))
       file (assoc :file (str file))
       (integer? line) (assoc :line line))))
 
