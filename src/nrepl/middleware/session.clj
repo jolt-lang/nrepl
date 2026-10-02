@@ -55,22 +55,28 @@
       (reply {"value" value "ns" ns "status" ["done"]}))))
 
 (defn- spawn-worker [session]
-  (future
-    (loop []
-      (when-let [job (a/<!! (:chan session))]
-        (let [{:keys [code ns reply id thunk caught?]} job
-              token (jolt.host/make-interrupt)]
-          (reset! (:current session) {:id id :reply reply :token token})
-          (try (if thunk
-                 (jolt.host/run-interruptible token thunk)
-                 (run-eval session code ns reply caught? token))
-               (catch :default e
-                 (if (:jolt/interrupted (ex-data e))
-                   (reply {"status" ["interrupted" "done"]})
-                   (do (reply {"err" (str (server/err-msg e) "\n")})
-                       (reply {"status" ["eval-error" "done"]}))))
-               (finally (reset! (:current session) nil)))
-          (recur))))))
+  ;; A daemon, as nREPL's session threads are on the JVM: the worker waits on
+  ;; the session's channel for as long as the session exists, and that must not
+  ;; keep the process up once the program's own threads are done.
+  (doto (Thread.
+          (bound-fn []
+            (loop []
+              (when-let [job (a/<!! (:chan session))]
+                (let [{:keys [code ns reply id thunk caught?]} job
+                      token (jolt.host/make-interrupt)]
+                  (reset! (:current session) {:id id :reply reply :token token})
+                  (try (if thunk
+                         (jolt.host/run-interruptible token thunk)
+                         (run-eval session code ns reply caught? token))
+                       (catch :default e
+                         (if (:jolt/interrupted (ex-data e))
+                           (reply {"status" ["interrupted" "done"]})
+                           (do (reply {"err" (str (server/err-msg e) "\n")})
+                               (reply {"status" ["eval-error" "done"]}))))
+                       (finally (reset! (:current session) nil)))
+                  (recur))))))
+    (.setDaemon true)
+    (.start)))
 
 (defn- make-session [clone-from]
   (let [base (get @sessions clone-from)
