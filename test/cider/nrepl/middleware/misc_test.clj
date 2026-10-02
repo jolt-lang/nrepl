@@ -100,7 +100,7 @@
           (let [r (h/combine (h/message t {:op "analyze-last-stacktrace"}))
                 frames (:stacktrace r)]
             (is (= "framed" (:message r)))
-            (is (some #(= "stacktrace-test-target/thrower" (get % "name")) frames)))
+            (is (some #(= "stacktrace-test-target/thrower" (get % "var")) frames)))
           (finally (nrepl/close t)))))))
 
 ;; --- out --------------------------------------------------------------------
