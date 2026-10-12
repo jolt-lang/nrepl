@@ -41,18 +41,31 @@
         ns-atom (:ns session)
         ;; the actual evaluation runs interruptibly: interrupt! on `token` aborts
         ;; it (throws {:jolt/interrupted true}), which the worker catches below.
-        {:keys [value out ns err]}
+        {:keys [value out ns err ex err-msg ex-class root-ex-class]}
         (jolt.host/run-interruptible token (fn [] (server/evaluate code (or ns-str @ns-atom))))]
     (reset! ns-atom ns)
     (when (seq out) (reply {"out" out}))
-    (if err
-      (let [e (last-eval-exception err)]
-        (reply {"err" (str err "\n")})
+    (cond
+      (nil? err)
+      (reply {"value" value "ns" ns "status" ["done"]})
+
+      ;; a jolt whose evaluate renders the error the way JVM nREPL sends it:
+      ;; err in clojure.main/err->msg form, ex/root-ex as class strings with
+      ;; eval-error, then done on its own message
+      err-msg
+      (let [e (or ex (last-eval-exception err))]
+        (reply {"err" err-msg})
         ;; the throwable rides the eval-error response only, so a hook runs
         ;; once per error; wrap-caught dissocs it before the wire
+        (reply (cond-> {"ex" ex-class "root-ex" root-ex-class "status" ["eval-error"]}
+                 (and caught? e) (assoc caught/throwable-key e)))
+        (reply {"status" ["done"]}))
+
+      :else
+      (let [e (last-eval-exception err)]
+        (reply {"err" (str err "\n")})
         (reply (cond-> {"ex" (str err) "status" ["eval-error" "done"]}
-                 (and caught? e) (assoc caught/throwable-key e))))
-      (reply {"value" value "ns" ns "status" ["done"]}))))
+                 (and caught? e) (assoc caught/throwable-key e)))))))
 
 (defn- spawn-worker [session]
   ;; A daemon, as nREPL's session threads are on the JVM: the worker waits on
@@ -71,8 +84,12 @@
                        (catch :default e
                          (if (:jolt/interrupted (ex-data e))
                            (reply {"status" ["interrupted" "done"]})
-                           (do (reply {"err" (str (server/err-msg e) "\n")})
-                               (reply {"status" ["eval-error" "done"]}))))
+                           (if-let [err->msg (resolve 'jolt.nrepl/err->msg)]
+                             (do (reply {"err" (err->msg e)})
+                                 (reply {"ex" (str (class e)) "status" ["eval-error"]})
+                                 (reply {"status" ["done"]}))
+                             (do (reply {"err" (str (server/err-msg e) "\n")})
+                                 (reply {"status" ["eval-error" "done"]})))))
                        (finally (reset! (:current session) nil)))
                   (recur))))))
     (.setDaemon true)

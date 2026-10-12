@@ -34,3 +34,33 @@
       (is (contains? (set (:sessions (h/combine (h/message t {:op "ls-sessions"})))) s))
       (h/message t {:op "close" :session s})
       (is (not (contains? (set (:sessions (h/combine (h/message t {:op "ls-sessions"})))) s))))))
+
+(deftest eval-error-has-jvm-shape
+  (when h/jvm-error-shape?
+    (with-conn t
+      (let [s (h/new-session t)
+            rs (h/eval-code t "(/ 1 0)" :session s)
+            c (h/combine rs)]
+        (is (= "Execution error (ArithmeticException) at (REPL:1).\nDivide by zero\n" (:err c)))
+        (is (= "class java.lang.ArithmeticException" (:ex c)))
+        (is (= "class java.lang.ArithmeticException" (:root-ex c)))
+        (is (contains? (:status c) "eval-error"))
+        (is (contains? (:status c) "done"))
+        (testing "done arrives on its own message, after eval-error, as on the JVM"
+          (is (= ["done"] (get (last rs) :status))))))))
+
+(deftest reader-error-has-no-stale-trace
+  (when h/jvm-error-shape?
+    (with-conn t
+      (let [s (h/new-session t)
+            c (h/combine (h/eval-code t "(defn broken [x]" :session s))]
+        (is (re-find #"^Syntax error reading source at \(REPL:1:\d+\)\.\nEOF while reading\n$" (:err c)))
+        (is (not (re-find #"trace:" (:err c))))))))
+
+(deftest lazy-result-output-reaches-the-client
+  (when h/jvm-error-shape?
+    (with-conn t
+      (let [s (h/new-session t)
+            c (h/combine (h/eval-code t "(map (fn [x] (println \"side\" x) x) [1 2])" :session s))]
+        (is (= "side 1\nside 2\n" (:out c)))
+        (is (= ["(1 2)"] (:value c)))))))
