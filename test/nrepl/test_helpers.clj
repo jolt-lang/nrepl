@@ -88,3 +88,9 @@
 (def combine nrepl/combine-responses)
 (def values nrepl/response-values)
 (def send-raw transport/send)
+
+(def jvm-error-shape?
+  "True when jolt.nrepl/evaluate returns the JVM nREPL error shape (:err-msg,
+  :ex-class, :root-ex-class) — jolt with `jolt.nrepl/err->msg`. On an older
+  jolt the session middleware falls back to the message-only shape."
+  (boolean (resolve 'jolt.nrepl/err->msg)))
