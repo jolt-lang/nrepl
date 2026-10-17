@@ -41,8 +41,13 @@
         ns-atom (:ns session)
         ;; the actual evaluation runs interruptibly: interrupt! on `token` aborts
         ;; it (throws {:jolt/interrupted true}), which the worker catches below.
+        ;; Output streams: evaluate calls :out / :err with each chunk as it is
+        ;; flushed, while the eval runs, as upstream's session writers do. :out
+        ;; then comes back empty.
         {:keys [value out ns err ex err-msg ex-class root-ex-class]}
-        (jolt.host/run-interruptible token (fn [] (server/evaluate code (or ns-str @ns-atom))))]
+        (jolt.host/run-interruptible token (fn [] (server/evaluate code (or ns-str @ns-atom)
+                                                                   {:out (fn [s] (reply {"out" s}))
+                                                                    :err (fn [s] (reply {"err" s}))})))]
     (reset! ns-atom ns)
     (when (seq out) (reply {"out" out}))
     (cond

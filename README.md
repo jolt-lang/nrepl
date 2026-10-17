@@ -53,6 +53,9 @@ project's deps are on the source roots and its native libs are loaded, so
 Each session keeps its own current namespace and runs evals on a dedicated
 serialized worker thread, so sessions are isolated and a long eval doesn't block
 other ops. `interrupt` aborts the running eval and the session keeps serving.
+An eval's output reaches the client as it is printed, one `out` (or `err`)
+message per flush, not all at once when the eval finishes. That needs jolt
+0.8.13, the floor `deps.edn` declares.
 
 Leave `cider.nrepl/cider-middleware` out if you only want eval: the cider ops are
 what pull in orchard and compliment.
