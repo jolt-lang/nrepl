@@ -64,3 +64,20 @@
             c (h/combine (h/eval-code t "(map (fn [x] (println \"side\" x) x) [1 2])" :session s))]
         (is (= "side 1\nside 2\n" (:out c)))
         (is (= ["(1 2)"] (:value c)))))))
+
+(deftest eval-output-streams-as-it-is-flushed
+  (with-conn t
+    (let [s (h/new-session t)
+          rs (h/eval-code t "(println \"first\") (Thread/sleep 200) (println \"second\") :ok" :session s)]
+      (testing "each println is its own out message, not one batch at the end"
+        (is (= ["first\n" "second\n"] (keep :out rs))))
+      (testing "the output comes before the value"
+        (is (< (.indexOf ^java.util.List (vec rs) (first (filter :out rs)))
+               (.indexOf ^java.util.List (vec rs) (first (filter :value rs)))))))))
+
+(deftest eval-err-output-reaches-the-client
+  (with-conn t
+    (let [s (h/new-session t)
+          rs (h/eval-code t "(binding [*out* *err*] (println \"warned\")) :ok" :session s)]
+      (is (= ["warned\n"] (keep :err rs)))
+      (is (= [":ok"] (keep :value rs))))))
