@@ -34,7 +34,7 @@ composes them over the built-in handler:
 
 ```clojure
 {:deps {jolt-lang/nrepl {:git/url "https://github.com/jolt-lang/nrepl"
-                         :git/tag "v0.3.0" :git/sha "d779043"}}
+                         :git/tag "v0.4.0" :git/sha "7efdd6c"}}
  :nrepl/middleware [nrepl.middleware/default-middleware
                     cider.nrepl/cider-middleware]}
 ```
