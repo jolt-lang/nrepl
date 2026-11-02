@@ -36,7 +36,7 @@
     (when (and e err (str/starts-with? err (server/err-msg e)))
       e)))
 
-(defn- run-eval [session code-wire ns-str reply caught? token]
+(defn- run-eval [session code-wire ns-str load? reply caught? token]
   (let [code (bencode/wire-> code-wire)
         ns-atom (:ns session)
         ;; the actual evaluation runs interruptibly: interrupt! on `token` aborts
@@ -47,7 +47,11 @@
         {:keys [value out ns err ex err-msg ex-class root-ex-class]}
         (jolt.host/run-interruptible token (fn [] (server/evaluate code (or ns-str @ns-atom)
                                                                    {:out (fn [s] (reply {"out" s}))
-                                                                    :err (fn [s] (reply {"err" s}))})))]
+                                                                    :err (fn [s] (reply {"err" s}))
+                                                                    ;; a load-file op is a load: the
+                                                                    ;; file's ns form doesn't switch
+                                                                    ;; the session, as on JVM nREPL
+                                                                    :load load?})))]
     (reset! ns-atom ns)
     (when (seq out) (reply {"out" out}))
     (cond
@@ -80,12 +84,12 @@
           (bound-fn []
             (loop []
               (when-let [job (a/<!! (:chan session))]
-                (let [{:keys [code ns reply id thunk caught?]} job
+                (let [{:keys [code ns load? reply id thunk caught?]} job
                       token (jolt.host/make-interrupt)]
                   (reset! (:current session) {:id id :reply reply :token token})
                   (try (if thunk
                          (jolt.host/run-interruptible token thunk)
-                         (run-eval session code ns reply caught? token))
+                         (run-eval session code ns load? reply caught? token))
                        (catch :default e
                          (if (:jolt/interrupted (ex-data e))
                            (reply {"status" ["interrupted" "done"]})
@@ -169,6 +173,7 @@
         (a/>!! (:chan session)
                {:code (if (= op "load-file") (get request "file") (get request "code"))
                 :ns (get request "ns")
+                :load? (= op "load-file")
                 :id (get request "id")
                 :reply (:reply request)
                 :caught? (get request caught/enabled-key)})
