@@ -81,3 +81,23 @@
           rs (h/eval-code t "(binding [*out* *err*] (println \"warned\")) :ok" :session s)]
       (is (= ["warned\n"] (keep :err rs)))
       (is (= [":ok"] (keep :value rs))))))
+
+(defn- runtime-loads?
+  "Whether this jolt's evaluate takes :load (0.8.24 on); an older one ignores
+  the key, and its load-file then switches the session as an eval does."
+  []
+  (= "user" (:ns (jolt.nrepl/evaluate "(ns zzz.load-probe)" "user" {:load true}))))
+
+(deftest load-file-keeps-the-session-ns
+  ;; A load-file op is a load, as on JVM nREPL: the file's ns form switches only
+  ;; while it loads, so the session's next eval is back where it was.
+  (when (runtime-loads?)
+   (with-conn t
+    (let [s (h/new-session t)]
+      (h/eval-code t "(ns ccc.gamma)" :session s)
+      (let [r (h/combine (h/message t {:op "load-file" :session s
+                                       :file "(ns ccc.loaded) (defn f [] 7)"
+                                       :file-name "loaded.clj" :file-path "loaded.clj"}))]
+        (is (= 7 (h/eval-value t "(ccc.loaded/f)" :session s)))
+        (is (not= "ccc.loaded" (:ns r))))
+      (is (= "ccc.gamma" (:ns (h/combine (h/eval-code t "(+ 1 1)" :session s)))))))))
