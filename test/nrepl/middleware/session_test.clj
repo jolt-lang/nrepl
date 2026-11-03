@@ -101,3 +101,22 @@
         (is (= 7 (h/eval-value t "(ccc.loaded/f)" :session s)))
         (is (not= "ccc.loaded" (:ns r))))
       (is (= "ccc.gamma" (:ns (h/combine (h/eval-code t "(+ 1 1)" :session s)))))))))
+
+(defn- runtime-takes-file?
+  "Whether this jolt's evaluate takes :file, the code's source path (after
+  0.8.23); an older one ignores the key, and *file* stays unbound to a path."
+  []
+  (= "\"/tmp/zzz/file_probe.clj\""
+     (:value (jolt.nrepl/evaluate "*file*" "user" {:file "/tmp/zzz/file_probe.clj"}))))
+
+(deftest load-file-passes-its-file-path
+  ;; As JVM nREPL compiles a load-file under its file-path: *file* is the path
+  ;; while it loads, and a def records it as :file.
+  (when (runtime-takes-file?)
+   (with-conn t
+    (let [s (h/new-session t)]
+      (h/combine (h/message t {:op "load-file" :session s
+                               :file "(ns ccc.pathed) (def here *file*) (defn g [] 1)"
+                               :file-name "pathed.clj" :file-path "/tmp/ccc/pathed.clj"}))
+      (is (= "/tmp/ccc/pathed.clj" (h/eval-value t "ccc.pathed/here" :session s)))
+      (is (= "/tmp/ccc/pathed.clj" (h/eval-value t "(:file (meta #'ccc.pathed/g))" :session s)))))))
