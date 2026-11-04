@@ -36,6 +36,54 @@
     (when (and e err (str/starts-with? err (server/err-msg e)))
       e)))
 
+;; --- stdin -------------------------------------------------------------------
+;; A session's evals read *in* from what the client sends with the `stdin` op,
+;; as on JVM nREPL, not from the server process's own stdin (EOF under a
+;; daemon, or the terminal of a program that embeds the server, which the read
+;; would then compete with for keystrokes). (:input session) is an atom holding
+;; a vector of pending chars (as ints), with :eof where an empty `stdin` ended
+;; the input.
+
+(defn- take-input!
+  "The next pending char or :eof, removed from the queue; nil when none waits."
+  [input]
+  (first (first (swap-vals! input (fn [q] (if (seq q) (subvec q 1) q))))))
+
+(defn- read-char!
+  "A read() on the session's *in*: the next char sent with `stdin`, -1 at an
+  :eof. With nothing pending it says need-input once on the running eval's
+  message, as JVM nREPL does, then waits. The wait polls with short sleeps,
+  because a sleeping thread doesn't reach the engine timer run-interruptible
+  aborts at: once the eval's token is set it spins instead, so `interrupt`
+  lands and the worker replies interrupted."
+  [session]
+  (loop [asked? false]
+    (let [c (take-input! (:input session))]
+      (cond
+        (= :eof c) -1
+        c c
+        :else
+        (let [{:keys [reply token]} @(:current session)]
+          (when (and (not asked?) reply) (reply {"status" ["need-input"]}))
+          (if (and token (jolt.host/interrupted? token))
+            (loop [] (recur))
+            (do (Thread/sleep 10) (recur true))))))))
+
+(defn- session-in
+  "*in* for `session`'s evals. jolt's read and read-line go through a
+  LineNumberingPushbackReader, which calls only the Reader's read()."
+  [session]
+  (clojure.lang.LineNumberingPushbackReader.
+   (proxy [java.io.Reader] []
+     (read ([] (read-char! session)))
+     (close [] nil))))
+
+(defn- add-input!
+  "The `stdin` op: `text` joins the session's pending input; an empty one is
+  end of input, so a read waiting on it returns EOF."
+  [session text]
+  (swap! (:input session) (fn [q] (if (empty? text) (conj q :eof) (into q (map int text))))))
+
 (defn- run-eval [session code-wire ns-str load? file reply caught? token]
   (let [code (bencode/wire-> code-wire)
         ns-atom (:ns session)
@@ -45,7 +93,8 @@
         ;; flushed, while the eval runs, as upstream's session writers do. :out
         ;; then comes back empty.
         {:keys [value out ns err ex err-msg ex-class root-ex-class]}
-        (jolt.host/run-interruptible token (fn [] (server/evaluate code (or ns-str @ns-atom)
+        ;; *in* is the session's, fed by the `stdin` op.
+        (jolt.host/run-interruptible token (fn [] (binding [*in* (:in session)] (server/evaluate code (or ns-str @ns-atom)
                                                                    {:out (fn [s] (reply {"out" s}))
                                                                     :err (fn [s] (reply {"err" s}))
                                                                     ;; a load-file op is a load: the
@@ -55,7 +104,7 @@
                                                                     ;; its file-path, which JVM nREPL
                                                                     ;; compiles a load-file under: a def
                                                                     ;; records it, and *file* is the path
-                                                                    :file file})))]
+                                                                    :file file}))))]
     (reset! ns-atom ns)
     (when (seq out) (reply {"out" out}))
     (cond
@@ -113,7 +162,9 @@
         session {:id (server/new-session)
                  :ns (atom (if base @(:ns base) "user"))
                  :chan (a/chan 64)
-                 :current (atom nil)}]
+                 :current (atom nil)
+                 :input (atom [])}
+        session (assoc session :in (session-in session))]
     (spawn-worker session)
     (swap! sessions assoc (:id session) session)
     session))
@@ -153,10 +204,11 @@
     (swap! sessions dissoc session-id)))
 
 (defn session
-  "Middleware: handles clone/close and routes eval/load-file for a session to its
-  worker; other ops (and session-less evals) pass through to `handler`."
+  "Middleware: handles clone/close and stdin, and routes eval/load-file for a
+  session to its worker; other ops (and session-less evals) pass through to
+  `handler`."
   [handler]
-  (server/register-ops! "clone" "close" "eval" "load-file" "ls-sessions")
+  (server/register-ops! "clone" "close" "eval" "load-file" "ls-sessions" "stdin")
   (fn [request]
     (let [op (get request "op")
           sid (get request "session")
@@ -172,6 +224,12 @@
         (= op "close")
         (do (close-session! sid)
             (server/respond request {"status" ["session-closed" "done"]}))
+
+        ;; answered here, not on the worker: the eval waiting for this input
+        ;; is what occupies the worker
+        (and session (= op "stdin"))
+        (do (add-input! session (bencode/wire-> (or (get request "stdin") "")))
+            (server/respond request {"status" ["done"]}))
 
         (and session (#{"eval" "load-file"} op))
         (a/>!! (:chan session)

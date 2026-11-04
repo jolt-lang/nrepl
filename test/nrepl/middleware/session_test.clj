@@ -2,7 +2,8 @@
   "Ported from nrepl.middleware.session-test — stateful, isolated sessions."
   (:require [clojure.test :refer [deftest is testing]]
             [nrepl.core :as nrepl]
-            [nrepl.test-helpers :as h]))
+            [nrepl.test-helpers :as h]
+            [nrepl.transport :as transport]))
 
 (defmacro with-conn [t & body]
   `(let [~t (h/conn)] (try ~@body (finally (nrepl/close ~t)))))
@@ -120,3 +121,57 @@
                                :file-name "pathed.clj" :file-path "/tmp/ccc/pathed.clj"}))
       (is (= "/tmp/ccc/pathed.clj" (h/eval-value t "ccc.pathed/here" :session s)))
       (is (= "/tmp/ccc/pathed.clj" (h/eval-value t "(:file (meta #'ccc.pathed/g))" :session s)))))))
+
+;; --- stdin --------------------------------------------------------------------
+
+(defn- recv-until
+  "Every response read up to and including the first one matching `pred`."
+  [t pred]
+  (loop [acc []]
+    (let [r (transport/recv t)]
+      (cond (nil? r) acc
+            (pred r) (conj acc r)
+            :else (recur (conj acc r))))))
+
+(defn- status-on [id status]
+  (fn [r] (and (= id (get r "id")) (some #{status} (get r "status")))))
+
+(defn- value-on [rs id]
+  (some #(when (= id (get % "id")) (get % "value")) rs))
+
+(deftest read-line-reads-what-stdin-sends
+  (with-conn t
+    (let [s (h/new-session t)]
+      (h/send-raw t {:op "eval" :code "(read-line)" :session s :id "rl"})
+      (testing "a read with nothing pending asks for input on the eval's message"
+        (is (some (status-on "rl" "need-input") (recv-until t (status-on "rl" "need-input")))))
+      (h/send-raw t {:op "stdin" :stdin "hello\n" :session s :id "in"})
+      (is (= "\"hello\"" (value-on (recv-until t (status-on "rl" "done")) "rl"))))))
+
+(deftest an-empty-stdin-is-end-of-input
+  (with-conn t
+    (let [s (h/new-session t)]
+      (h/send-raw t {:op "eval" :code "(read-line)" :session s :id "eof"})
+      (recv-until t (status-on "eof" "need-input"))
+      (h/send-raw t {:op "stdin" :stdin "" :session s :id "in"})
+      (is (= "nil" (value-on (recv-until t (status-on "eof" "done")) "eof"))))))
+
+(deftest input-sent-ahead-is-read-without-asking
+  (with-conn t
+    (let [s (h/new-session t)]
+      (is (contains? (:status (h/combine (h/message t {:op "stdin" :stdin "(+ 1 2)\n" :session s})))
+                     "done"))
+      (h/send-raw t {:op "eval" :code "(read)" :session s :id "rd"})
+      (let [rs (recv-until t (status-on "rd" "done"))]
+        (is (= "(+ 1 2)" (value-on rs "rd")))
+        (is (not-any? (status-on "rd" "need-input") rs))))))
+
+(deftest interrupt-ends-a-read-waiting-for-input
+  (with-conn t
+    (let [s (h/new-session t)]
+      (h/send-raw t {:op "eval" :code "(read-line)" :session s :id "wait"})
+      (recv-until t (status-on "wait" "need-input"))
+      (h/send-raw t {:op "interrupt" :session s :interrupt-id "wait" :id "int"})
+      (is (some (status-on "wait" "interrupted") (recv-until t (status-on "wait" "done"))))
+      (testing "the session's worker keeps serving"
+        (is (= 2 (h/eval-value t "(+ 1 1)" :session s)))))))
