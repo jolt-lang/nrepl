@@ -1,7 +1,16 @@
 (ns nrepl.middleware.lookup
-  "Adds the `lookup` op: metadata (name, ns, doc, arglists) for a symbol, for
-  editor docs / eldoc. Returns whatever var metadata jolt carries."
-  (:require [jolt.nrepl :as server]))
+  "Adds the `lookup` op: metadata (name, ns, doc, arglists, and where the var
+  was defined) for a symbol, for editor docs / eldoc / jump-to-definition.
+  Returns whatever var metadata jolt carries."
+  (:require [clojure.java.io :as io]
+            [jolt.nrepl :as server]))
+
+(defn- file-str
+  "A var's :file as JVM nREPL's lookup sends it: a classpath-relative path
+  (`liq/buffer.cljc`) resolved to its resource URL, so a client can open it;
+  any other value (an absolute path, a REPL def's) as it is."
+  [file]
+  (str (or (and (string? file) (io/resource file)) file)))
 
 (defn- info [ns-str sym-str]
   (let [the-ns (or (and ns-str (find-ns (symbol ns-str))) (find-ns 'user))
@@ -12,7 +21,10 @@
         (cond-> {"name" (str (or (:name m) sym-str))
                  "ns" (str (:ns m))}
           (:doc m) (assoc "doc" (str (:doc m)))
-          (:arglists m) (assoc "arglists-str" (pr-str (:arglists m))))))))
+          (:arglists m) (assoc "arglists-str" (pr-str (:arglists m)))
+          (:file m) (assoc "file" (file-str (:file m)))
+          (:line m) (assoc "line" (:line m))
+          (:column m) (assoc "column" (:column m)))))))
 
 (defn lookup
   [handler]
