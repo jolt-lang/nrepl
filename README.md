@@ -50,6 +50,36 @@ Connect your editor (CIDER / Calva / Cursive) to the port in `.nrepl-port`. Your
 project's deps are on the source roots and its native libs are loaded, so
 `(require '[some.lib])` works in the session.
 
+### Editors: connect, don't jack in
+
+Start the server with `jolt nrepl-server`, then use your editor's connect command
+(`cider-connect-clj`, Calva's *Connect to a running REPL in your project*, a Cursive
+*Remote* run configuration).
+
+An editor's default jack-in on a `deps.edn` project starts the JVM with `clojure`,
+which can't run this library. It has the same `nrepl.*` namespaces as nrepl/nrepl
+but is built on `jolt.ffi`, so the JVM stops with:
+
+```
+Could not locate jolt/ffi__init.class, jolt/ffi.clj or jolt/ffi.cljc on classpath.
+```
+
+To make Calva's Jack-in command start jolt instead, add a custom connect sequence to
+`.vscode/settings.json`:
+
+```json
+{
+  "calva.replConnectSequences": [
+    {
+      "name": "Jolt",
+      "projectType": "custom",
+      "customJackInCommandLine": "jolt nrepl-server",
+      "nReplPortFile": [".nrepl-port"]
+    }
+  ]
+}
+```
+
 Each session keeps its own current namespace and runs evals on a dedicated
 serialized worker thread, so sessions are isolated and a long eval doesn't block
 other ops. `interrupt` aborts the running eval and the session keeps serving.
