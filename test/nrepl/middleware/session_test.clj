@@ -175,3 +175,29 @@
       (is (some (status-on "wait" "interrupted") (recv-until t (status-on "wait" "done"))))
       (testing "the session's worker keeps serving"
         (is (= 2 (h/eval-value t "(+ 1 1)" :session s)))))))
+
+(deftest explicit-ns-does-not-move-the-session
+  ;; as JVM nREPL restores the session's *ns* after an eval that named one
+  (with-conn t
+    (let [s (h/new-session t)]
+      (h/eval-code t "(ns ccc.gamma)" :session s)
+      (is (= "clojure.string" (:ns (h/combine (h/eval-code t "(+ 1 1)" :session s :ns "clojure.string")))))
+      (h/eval-code t "(in-ns 'ccc.elsewhere)" :session s :ns "user")
+      (is (= "ccc.gamma" (:ns (h/combine (h/eval-code t "(+ 1 1)" :session s))))))))
+
+(deftest namespace-not-found
+  ;; JVM nREPL's answer for an ns that does not exist; the code is not run
+  (with-conn t
+    (let [s (h/new-session t)
+          r (h/combine (h/eval-code t "(def ddd-stray 1)" :session s :ns "ddd.no-such-ns"))]
+      (is (= #{"error" "namespace-not-found" "done"} (set (:status r))))
+      (is (= "ddd.no-such-ns" (:ns r)))
+      (is (nil? (find-ns 'ddd.no-such-ns)))
+      (is (= "user" (:ns (h/combine (h/eval-code t "(+ 1 1)" :session s))))))))
+
+(deftest removed-session-ns-starts-in-user
+  (with-conn t
+    (let [s (h/new-session t)]
+      (h/eval-code t "(ns eee.gone)" :session s)
+      (h/eval-code t "(remove-ns 'eee.gone)" :session s :ns "user")
+      (is (= "user" (:ns (h/combine (h/eval-code t "(+ 1 1)" :session s))))))))
