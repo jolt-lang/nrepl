@@ -84,7 +84,21 @@
   [session text]
   (swap! (:input session) (fn [q] (if (empty? text) (conj q :eof) (into q (map int text))))))
 
-(defn- run-eval [session code-wire ns-str load? file reply caught? token]
+(defn- user-ns-name
+  "\"user\", created with clojure.core referred when the process has none."
+  []
+  (when-not (find-ns 'user)
+    (binding [*ns* (create-ns 'user)] (refer-clojure)))
+  "user")
+
+(defn- start-ns-name
+  "Where an eval that names no ns starts: the session's ns, or user when that
+  ns has since been removed (rather than whatever *ns* the worker has)."
+  [session]
+  (let [n @(:ns session)]
+    (if (find-ns (symbol n)) n (user-ns-name))))
+
+(defn- run-eval* [session code-wire ns-str load? file reply caught? token]
   (let [code (bencode/wire-> code-wire)
         ns-atom (:ns session)
         ;; the actual evaluation runs interruptibly: interrupt! on `token` aborts
@@ -94,7 +108,7 @@
         ;; then comes back empty.
         {:keys [value out ns err ex err-msg ex-class root-ex-class]}
         ;; *in* is the session's, fed by the `stdin` op.
-        (jolt.host/run-interruptible token (fn [] (binding [*in* (:in session)] (server/evaluate code (or ns-str @ns-atom)
+        (jolt.host/run-interruptible token (fn [] (binding [*in* (:in session)] (server/evaluate code (or ns-str (start-ns-name session))
                                                                    {:out (fn [s] (reply {"out" s}))
                                                                     :err (fn [s] (reply {"err" s}))
                                                                     ;; a load-file op is a load: the
@@ -105,7 +119,9 @@
                                                                     ;; compiles a load-file under: a def
                                                                     ;; records it, and *file* is the path
                                                                     :file file}))))]
-    (reset! ns-atom ns)
+    ;; the session keeps where the eval left it, unless the eval named its
+    ;; ns: JVM nREPL restores the session's *ns* after one of those
+    (when-not ns-str (reset! ns-atom ns))
     (when (seq out) (reply {"out" out}))
     (cond
       (nil? err)
@@ -128,6 +144,14 @@
         (reply {"err" (str err "\n")})
         (reply (cond-> {"ex" (str err) "status" ["eval-error" "done"]}
                  (and caught? e) (assoc caught/throwable-key e)))))))
+
+(defn- run-eval [session code-wire ns-str load? file reply caught? token]
+  (let [ns-str (when (and (string? ns-str) (not (str/blank? ns-str))) ns-str)]
+    ;; an ns the request names that does not exist: no eval, as JVM nREPL
+    ;; answers it, rather than running the code wherever *ns* happens to be
+    (if (and ns-str (not (find-ns (symbol ns-str))))
+      (reply {"ns" ns-str "status" ["error" "namespace-not-found" "done"]})
+      (run-eval* session code-wire ns-str load? file reply caught? token))))
 
 (defn- spawn-worker [session]
   ;; A daemon, as nREPL's session threads are on the JVM: the worker waits on
