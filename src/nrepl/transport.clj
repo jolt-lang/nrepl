@@ -2,6 +2,7 @@
   "Client-side bencode transport over a TCP socket bound through jolt.ffi.
   `connect` opens a connection to a running nREPL server; `send`/`recv` move
   bencode messages. The server side lives in jolt core (jolt.nrepl)."
+  (:refer-clojure :exclude [send])
   (:require [clojure.string :as str]
             [jolt.ffi :as ffi]
             [jolt.io-poller :as poller]
