@@ -29,7 +29,8 @@
             [cider.nrepl.middleware.stacktrace :as stacktrace]
             [cider.nrepl.middleware.test :as test]
             [cider.nrepl.middleware.undef :as undef]
-            [jolt.nrepl :as server]))
+            [jolt.nrepl :as server]
+            [nrepl.middleware.utf8 :as utf8]))
 
 (def version
   "The cider-nrepl protocol version these ops implement. CIDER reads this out of
@@ -43,8 +44,11 @@
   (register "cider-nrepl" version))
 
 (def cider-middleware
-  "Every cider op, as one entry for deps.edn's :nrepl/middleware."
-  [info/middleware
+  "Every cider op, as one entry for deps.edn's :nrepl/middleware. wrap-utf8
+  comes first so the ops read UTF-8 text when this is listed without
+  nrepl.middleware/default-middleware; with it, the request is decoded once."
+  [utf8/wrap-utf8
+   info/middleware
    complete/middleware
    ns/middleware
    classpath/middleware

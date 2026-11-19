@@ -13,6 +13,7 @@
   documentation here, not a sort key."
   (:require [nrepl.middleware.session :refer [session]]
             [nrepl.middleware.caught :refer [wrap-caught]]
+            [nrepl.middleware.utf8 :refer [wrap-utf8]]
             [nrepl.middleware.interruptible-eval :refer [interruptible-eval]]
             [nrepl.middleware.completion :refer [completion]]
             [nrepl.middleware.lookup :refer [lookup]]))
@@ -25,6 +26,7 @@
                (assoc descriptor :implemented-by (symbol (str (ns-name (:ns (meta v))) "/" (:name (meta v)))))))
 
 (def default-middleware
-  ;; wrap-caught first: it must wrap :reply before session (which replies from
+  ;; wrap-utf8 first so every op after it reads request values as UTF-8 text.
+  ;; Then wrap-caught: it must wrap :reply before session (which replies from
   ;; its worker thread) ever sees the request.
-  [wrap-caught session interruptible-eval completion lookup])
+  [wrap-utf8 wrap-caught session interruptible-eval completion lookup])
