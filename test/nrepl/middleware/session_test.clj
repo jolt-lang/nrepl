@@ -148,6 +148,14 @@
       (h/send-raw t {:op "stdin" :stdin "hello\n" :session s :id "in"})
       (is (= "\"hello\"" (value-on (recv-until t (status-on "rl" "done")) "rl"))))))
 
+(deftest stdin-carries-unicode
+  (with-conn t
+    (let [s (h/new-session t)]
+      (h/send-raw t {:op "eval" :code "(read-line)" :session s :id "u"})
+      (recv-until t (status-on "u" "need-input"))
+      (h/send-raw t {:op "stdin" :stdin "สวัสดี\n" :session s :id "in"})
+      (is (= "\"สวัสดี\"" (value-on (recv-until t (status-on "u" "done")) "u"))))))
+
 (deftest an-empty-stdin-is-end-of-input
   (with-conn t
     (let [s (h/new-session t)]

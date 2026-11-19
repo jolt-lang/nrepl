@@ -20,7 +20,8 @@
             [clojure.string :as str]
             [jolt.nrepl :as server]
             [nrepl.bencode :as bencode]
-            [nrepl.middleware.caught :as caught]))
+            [nrepl.middleware.caught :as caught]
+            [nrepl.middleware.utf8 :as utf8]))
 
 (def ^:private sessions (atom {}))   ;; id -> session
 
@@ -252,7 +253,7 @@
         ;; answered here, not on the worker: the eval waiting for this input
         ;; is what occupies the worker
         (and session (= op "stdin"))
-        (do (add-input! session (bencode/wire-> (or (get request "stdin") "")))
+        (do (add-input! session (or (utf8/text request "stdin") ""))
             (server/respond request {"status" ["done"]}))
 
         (and session (#{"eval" "load-file"} op))

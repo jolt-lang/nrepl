@@ -13,6 +13,7 @@
             [nrepl.middleware.lookup-test]
             [nrepl.middleware.interruptible-eval-test]
             [nrepl.middleware.caught-test]
+            [nrepl.middleware.utf8-test]
             [cider.nrepl.middleware.info-test]
             [cider.nrepl.middleware.complete-test]
             [cider.nrepl.middleware.ns-test]
@@ -25,7 +26,8 @@
   ['nrepl.bencode-test 'nrepl.core-test 'nrepl.transport-test
    'nrepl.middleware.session-test 'nrepl.middleware.completion-test
    'nrepl.middleware.lookup-test 'nrepl.middleware.interruptible-eval-test
-   'nrepl.middleware.caught-test 'cider.nrepl.middleware.info-test
+   'nrepl.middleware.caught-test 'nrepl.middleware.utf8-test
+   'cider.nrepl.middleware.info-test
    'cider.nrepl.middleware.complete-test 'cider.nrepl.middleware.ns-test
    'cider.nrepl.middleware.test-test 'cider.nrepl.middleware.misc-test])
 
